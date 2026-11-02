@@ -1,0 +1,67 @@
+name: Build plugin
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            targets: Basement_VST3
+            extra: ""
+          - os: macos-latest
+            name: macOS
+            targets: Basement_VST3 Basement_AU
+            extra: -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S Basement -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.extra }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4 --target ${{ matrix.targets }}
+
+      - name: Zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path build/Basement_artefacts/Release/VST3/Basement.vst3 -DestinationPath Basement-Windows.zip
+
+      - name: Zip (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd build/Basement_artefacts/Release
+          zip -r -y "$GITHUB_WORKSPACE/Basement-macOS.zip" VST3 AU
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Basement-${{ matrix.name }}
+          path: Basement-${{ matrix.name }}.zip
+
+  release:
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Basement build ${{ github.run_number }}
+          files: dist/*.zip
